@@ -1,0 +1,218 @@
+---
+title: "Nested Data"
+format: 
+  html:
+    page-layout: custom
+server: shiny
+editor: visual
+fig-format: svg
+---
+
+Be sure to run `renv::restore()`, and then click on the "Run Document" button.
+
+```{r}
+#| panel: sidebar
+sliderInput(
+  "mu", 
+  "mu:", 
+  min = 400, 
+  max = 700, 
+  value = 450
+  )
+sliderInput(
+  "spcom",
+  "Community Sigma",
+  min = 50,
+  max = 150,
+  value = 80
+)
+
+sliderInput(
+  "nspeak",
+  "Number of speakers",
+  min = 3,
+  max = 10,
+  value = 5
+)
+
+sliderInput(
+  "ndata",
+  "Data points per speaker",
+  min = 10,
+  max = 50,
+  value = 20
+)
+```
+
+```{r}
+#| panel: fill
+plotOutput(
+  "distPlot",
+  width = "400px",
+  height = "250px"
+)
+```
+
+```{r}
+#| panel: fill
+#| layout-ncol: 2
+#| fig-width: 6
+#| fig-asp: 0.618
+#| fig-align: center
+plotOutput(
+  "spDists", 
+  width = "100%",
+  height = "500px")
+plotOutput(
+  "spDat",
+  width = "100%",
+  height = "500px")
+
+
+```
+
+```{r}
+#| context: server
+library(tidyverse)
+library(distributional)
+library(ggdist)
+theme_set(theme_minimal(base_size = 20))
+
+theme_no_y <- function(){
+  theme_sub_axis_y(
+    text = element_blank(),
+    title = element_blank()
+  )
+}
+
+dist <- reactive({
+  dist_normal(0,input$spcom)
+})
+
+dist_samp <- reactive({
+  tibble(
+    gamma = generate(dist_normal(0, 1), input$nspeak)
+  ) |> 
+    unnest(gamma) |> 
+    mutate(
+      speaker = factor(row_number())
+    ) 
+})
+  
+gammas <- reactive({  
+  dist_samp() |> 
+    mutate(
+      gamma = gamma * input$spcom
+    )
+})
+
+output$distPlot <- renderPlot({
+  ggplot() + 
+    stat_slab(
+      aes(xdist = dist()),
+      fill = NA,
+      color = "black"
+    ) + 
+    xlim(-300, 300) +
+    geom_dots(
+      data = gammas(),
+      aes(
+        x = gamma,
+        color = speaker,
+        group = 1
+      ),
+      binwidth = 20,
+      shape = "triangle"
+    ) +
+    labs(
+      title = "Speaker offsets"
+    ) +
+    theme_no_y()
+})
+
+spDists <- reactive({
+  gammas() |> 
+    mutate(
+      dist = dist_normal(input$mu + gamma, 180)
+    )
+})
+
+spGamma <- reactive({
+  gammas() |> 
+    mutate(
+      distg = dist_normal(gamma, 180)
+    )
+})
+
+spBase <- reactive({
+  tibble(
+    speaker = as.factor(1:input$nspeak),
+    mu1 = 0
+  ) |> 
+    mutate(
+      sdist = dist_normal(mu1, 1),
+      f1 = generate(sdist, input$ndata)
+    ) |> 
+    unnest(f1) |> 
+    select(-sdist)
+})
+
+spData <- reactive({
+  gammas() |> 
+    left_join(
+      spBase(),
+      by = "speaker"
+    ) |> 
+    mutate(
+      f1 = (f1 * 180) + input$mu + gamma
+    )
+  # |> 
+  #   mutate(
+  #     f1 = f1 + input$mu + gamma
+  #   )
+})
+
+
+output$spDists <- renderPlot({
+  spDists() |> 
+    ggplot() +
+      stat_slab(
+        aes(
+          xdist = dist,
+          color = speaker
+        ),
+        fill = NA
+      ) +
+    xlim(0, 1200) +
+    labs(x = "f1", title = "Speaker Distributions") +
+    theme_no_y()
+})
+
+output$spDat <- renderPlot({
+  spData() |>
+    mutate(
+      f1 = case_when(
+        f1 < 0 ~ 0,
+        f1 > 1200 ~ 1200,
+        .default = f1
+      )
+    ) |>
+    ggplot() +
+    geom_dots(
+      aes(
+        x = f1,
+        color = speaker,
+        group = 1,
+        order = speaker
+      ),
+      shape = "circle",
+      binwidth = 15
+    ) +
+    xlim(0, 1200) +
+    labs(
+      title = "Observed Data"
+    ) +
+    theme_no_y()
+})
+
+```
