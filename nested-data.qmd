@@ -14,17 +14,26 @@ Be sure to run `renv::restore()`, and then click on the "Run Document" button.
 #| panel: sidebar
 sliderInput(
   "mu", 
-  "mu:", 
+  "μ", 
   min = 400, 
   max = 700, 
-  value = 450
-  )
+  value = 550
+)
+
 sliderInput(
   "spcom",
-  "Community Sigma",
+  "Community σ",
   min = 50,
-  max = 150,
-  value = 80
+  max = 200,
+  value = 125
+)
+
+sliderInput(
+  "spsigma",
+  "Speaker σ",
+  min = 50,
+  max = 200,
+  value = 125
 )
 
 sliderInput(
@@ -37,37 +46,38 @@ sliderInput(
 
 sliderInput(
   "ndata",
-  "Data points per speaker",
+  "Typical n per speaker",
   min = 10,
   max = 50,
-  value = 20
+  value = 30
 )
+
 ```
 
 ```{r}
 #| panel: fill
+#| layout: "[[50,50],[50,50]]"
 plotOutput(
   "distPlot",
-  width = "400px",
-  height = "250px"
+  width = "100%",
+  height = "400px"
 )
-```
 
-```{r}
-#| panel: fill
-#| layout-ncol: 2
-#| fig-width: 6
-#| fig-asp: 0.618
-#| fig-align: center
 plotOutput(
   "spDists", 
   width = "100%",
-  height = "500px")
+  height = "400px"
+)
+
+tableOutput(
+  "spSummary"
+)
+
 plotOutput(
   "spDat",
   width = "100%",
-  height = "500px")
-
+  height = "400px"
+  )
 
 ```
 
@@ -76,6 +86,7 @@ plotOutput(
 library(tidyverse)
 library(distributional)
 library(ggdist)
+library(tinytable)
 theme_set(theme_minimal(base_size = 20))
 
 theme_no_y <- function(){
@@ -113,7 +124,7 @@ output$distPlot <- renderPlot({
       fill = NA,
       color = "black"
     ) + 
-    xlim(-300, 300) +
+    xlim(-400, 400) +
     geom_dots(
       data = gammas(),
       aes(
@@ -125,7 +136,8 @@ output$distPlot <- renderPlot({
       shape = "triangle"
     ) +
     labs(
-      title = "Speaker offsets"
+      title = "Speaker offsets",
+      x = expression(gamma)
     ) +
     theme_no_y()
 })
@@ -133,7 +145,7 @@ output$distPlot <- renderPlot({
 spDists <- reactive({
   gammas() |> 
     mutate(
-      dist = dist_normal(input$mu + gamma, 180)
+      dist = dist_normal(input$mu + gamma, input$spsigma)
     )
 })
 
@@ -151,31 +163,61 @@ spBase <- reactive({
   ) |> 
     mutate(
       sdist = dist_normal(mu1, 1),
-      f1 = generate(sdist, input$ndata)
+      f1 = generate(sdist, 100)
     ) |> 
-    unnest(f1) |> 
+    #unnest(f1) |> 
     select(-sdist)
+})
+
+spFilter <- reactive({
+  spBase() |> 
+    mutate(
+      n = rpois(input$nspeak, input$ndata)
+    ) |> 
+    unnest(f1)
 })
 
 spData <- reactive({
   gammas() |> 
     left_join(
-      spBase(),
+      spFilter(),
       by = "speaker"
     ) |> 
+    filter(
+      .by = speaker,
+      row_number() <= n
+    ) |>     
     mutate(
-      f1 = (f1 * 180) + input$mu + gamma
+      f1 = (f1 * input$spsigma) + input$mu + gamma
     )
-  # |> 
-  #   mutate(
-  #     f1 = f1 + input$mu + gamma
-  #   )
 })
 
+output$spSummary <- renderTable({
+  spData() |> 
+    summarise(
+      `n` = n(),
+      `sample mean` = mean(f1),
+      `sample sd` = sd(f1),
+      `sample se` = `sample sd` / sqrt(n)
+    ) |> 
+    mutate(
+      across(
+        everything(),
+        ~round(.x) |> as.integer()
+      )
+    )
+  
+  }, 
+  width = "50%"
+)
 
 output$spDists <- renderPlot({
   spDists() |> 
     ggplot() +
+      geom_vline(
+        xintercept = input$mu,
+        linewidth = 0.5
+      ) +
       stat_slab(
         aes(
           xdist = dist,
